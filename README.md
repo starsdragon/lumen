@@ -13,31 +13,31 @@
   [![Stars](https://img.shields.io/github/stars/starsdragon/lumen?style=flat-square&color=426EFE)](https://github.com/starsdragon/lumen/stargazers)
 </div>
 
-Lumen 是一个 Flutter 客户端，不是模型，也不是中转服务。它把模型 API、长期记忆、联网搜索、MCP 工具、文件和图片放进同一个本地优先的对话界面。模型由你选，Key 由你保管，会话和记忆默认只存在本机。
+Lumen 是一个本地优先的 Flutter AI 客户端，负责连接你选择的模型、保存记忆、组织搜索与工具调用。它把模型 API、长期记忆、联网搜索、MCP 工具、文件和图片放进同一个对话界面。模型由你选，Key 由你保管，会话和记忆默认只存在本机。
 
 ![Lumen 首屏](docs/assets/readme/hero.png)
 
 ## 主要特性
 
-- **记忆是可见、可改的。** 对话后自动抽取用户画像和长期事实，画像按字段合并，记忆去重后按相关度、重要性和时间检索。所有内容都能在“长期记忆”里查看、编辑、置顶或删除，不是藏在 system prompt 里的一段黑盒。
+- **记忆是可见、可改的。** 对话后自动抽取用户画像和长期事实，画像按字段合并，记忆去重后按相关度、重要性和时间检索。所有内容都能在“长期记忆”里查看、编辑、置顶或删除，画像和事实以结构化条目保存在本地。
 - **模型接入不依赖单一厂商。** DeepSeek、智谱 GLM、Kimi、MiniMax、阿里百炼、OpenCode Go、OpenAI、Anthropic、Google Gemini 预置了各自的协议和模型清单，也支持任意 OpenAI 兼容中转站。模型列表通过平台 `/models` 更新，失败时保留缓存。
 - **思考强度按平台原生参数发送。** 统一 7 档，适配器分别转换为 `thinking.type`、`reasoning_effort`、Anthropic adaptive thinking、Gemini `thinkingLevel` / `thinkingBudget` 等字段；遇到 400 会降级重试。
-- **搜索失败会继续找，不会停在那里。** 首选搜索源失败或空结果时，自动切换其他已配置源和免费源；网页读取并行进行，单页失败会尝试后面的结果页。搜索工具出错或模型返回空正文时，仍会生成回答。
+- **搜索源自动调度。** 按首选源、已配置的其他源和免费源依次尝试，最多 3 个源；网页并行读取，单个页面不可用时继续使用其他结果。搜索完成后，本次网页收在回答下方的折叠卡片里。
 - **来源不塞进正文。** 回答里不出现 `[1]`、`[2]` 或末尾“参考来源”列表；本次网页收在回答下方的“N 个网页”按钮里，点开可看标题、域名、日期和摘要，再确认是否跳转。
 - **文件和图片在本地处理。** 支持 PDF、DOCX、XLSX、PPTX、TXT/Markdown/JSON/CSV/HTML 和常见代码文件；图片可输入视觉模型，也可调用生图模型。文件文本在本地提取，作为不可信资料注入，不执行文件里的指令。
 - **不需要账号。** 会话、消息、画像、记忆、MCP 配置保存在 Sembast；API Key 走系统安全存储。没有云端同步，也没有必须经过 Lumen 服务端的请求。
 - **演示模式可直接跑。** 没有 API Key 也能体验完整 UI、流式输出、记忆、搜索卡片和生图流程，用来先确认交互再接入真实模型。
 
-## 和常见套壳客户端的区别
+## 设计取舍
 
-| 常见做法 | Lumen |
+| 方向 | Lumen 的做法 |
 |---|---|
-| 只接一家厂商，换模型要改代码 | 原生适配器 + 预置厂商 + 自定义 Base URL、Headers、Body |
-| 搜索结果直接拼进 prompt，正文里全是编号 | 搜索源失败切换、网页补位、来源折叠；正文只写答案 |
-| 模型不总结就弹“换模型”或“重试” | 干净重试 → 从已检索内容生成正文，保证有回答 |
-| 记忆是一段不可见的 system prompt | 可查看、编辑、置顶、删除的本地画像与事实 |
-| 必须登录云端才能保存对话 | 本地数据库；没有账号体系，也没有中转服务端 |
-| 配置和 Key 混在一起 | Key 放安全存储；高级 Headers/Body 与 MCP 配置单独保存 |
+| 模型接入 | 原生适配器 + 预置厂商 + 自定义 Base URL、Headers、Body |
+| 搜索与来源 | 多源调度、网页并行读取、来源折叠；正文只写答案 |
+| 记忆 | 本地结构化画像与事实，可编辑、可删除 |
+| 存储 | 本地数据库 + 系统安全存储；无需账号 |
+| 运行方式 | Android/Web 客户端，直接连接你选择的模型厂商 |
+| 配置 | Key 放安全存储；高级 Headers/Body 与 MCP 配置单独保存 |
 
 ## Preview
 
@@ -105,18 +105,16 @@ flutter build apk --release
 
 ## 联网搜索
 
-搜索不是一个固定 API，而是一条降级链：
+搜索按可用源自动调度：
 
 1. 先请求你选择的搜索源。
-2. 失败或没有结果时，按已配置的 Tavily / Google / Bing / SearXNG 和免费的 Bing / DuckDuckGo 继续尝试，最多 3 个源。
-3. 搜索成功后并行读取前 4 个网页；打不开的页面跳过，并尝试后面的结果页补位。
-4. 模型在最终回答阶段仍为空时，先发一个不带工具历史的干净请求；仍然为空，就把实际检索到的网页内容整理成正文。
+2. 当前源没有结果时，按已配置的 Tavily / Google / Bing / SearXNG 和免费的 Bing / DuckDuckGo 继续尝试，最多 3 个源。
+3. 搜索成功后并行读取前 4 个网页；不可用的页面跳过，并尝试后面的结果页补位。
 
 其他约定：
 
 - 正文不插入来源编号，也不单列 URL 清单；来源只出现在回答下方的折叠卡片里。
-- 点击来源先弹确认，再打开外部浏览器；不会从回答里直接静默跳转。
-- 兼容 DeepSeek V4 经部分网关输出的 DSML 工具调用标记，解析后执行，不从原始标记展示给用户。
+- 点击来源先弹确认，再打开外部浏览器。
 - 网页抓取只允许 `http` / `https`，逐跳拒绝 localhost、环回、私有、链路本地和云元数据地址，避免 `fetch_url` 被提示注入利用成内网扫描器。
 - Web 版受浏览器 CORS 限制，Bing 免费网页和 DuckDuckGo 通常不可用；Web 端请用 Tavily、Google CSE 或允许跨域的 SearXNG。Android 没有这个限制。
 
@@ -159,7 +157,7 @@ lib/
     chat_session   Agent 循环、工具执行、上下文裁剪、持久化、记忆抽取
     controllers    设置、厂商、会话、记忆、MCP 状态
     memory_service 画像和记忆抽取
-    search_service 搜索源切换、网页读取、失败补位
+    search_service 搜索源调度、网页读取与结果整理
     mcp_client     MCP JSON-RPC（HTTP / SSE / stdio）
     toolbox        web_search / fetch_url / memory / MCP 工具
   ui/              聊天、模型选择、记忆、设置、厂商、搜索、MCP、引导
@@ -182,14 +180,12 @@ flutter test
 
 - OpenAI / Anthropic / Gemini 的流式响应、思考内容和工具调用；
 - 思考强度参数映射与 400 降级；
-- DeepSeek DSML 解析（全角/半角、闭合/未闭合、带空格变体）；
-- 搜索源失败自动切换、前几页失败后继续尝试后续页、单页失败不影响其他页；
-- 模型空回答后的干净重试与本地正文兜底；
+- 搜索源调度、网页并行读取与后续页补位；
 - 文件导入、记忆合并/去重/检索、MCP 握手与工具调用、生图接口；
 - 来源折叠面板与外部跳转确认；
 - SSRF 地址拦截。
 
-真实模型链路用 OpenCode Go `deepseek-v4.1-flash` 做过验证：工具调用、失败工具结果回填、最终长回答均正常，输出不含 DSML 和 `[1]` 引注。其他厂商目前以协议层 mock 测试为主，没有逐个用真实 Key 联调。
+真实模型链路用 OpenCode Go `deepseek-v4.1-flash` 做过验证：工具调用、工具结果回填与最终长回答正常。其他厂商目前以协议层 mock 测试为主，没有逐个用真实 Key 联调。
 
 ## 已知限制
 
@@ -198,8 +194,8 @@ flutter test
 - Web 版免费网页搜索受 CORS 限制；Android 端可用。
 - 扫描版 PDF 不做 OCR；旧版 Office 格式需要先转换。
 - MCP stdio 只在桌面端可用；HTTP/SSE 在 Android/Web 可用。
-- 记忆检索是词法匹配，不是 embedding；适合个人规模，不适合百万级知识库。
-- 没有账号体系、云同步和团队协作；这是本地优先的取舍，不是待办清单。
+- 记忆检索使用本地词法匹配，定位个人规模；百万级知识库需要替换检索实现。
+- 产品按单设备本地使用设计，当前未包含账号体系、云同步与团队协作。
 - 除 OpenCode Go 外，其他厂商的在线响应尚未逐个实调；模型 ID 以各平台 `/models` 为准。
 - PDF 解析依赖 Syncfusion Flutter PDF 的 Community License；商业分发前请确认授权，或替换解析实现。
 
@@ -217,7 +213,7 @@ flutter build apk --release
 
 - `tools/mock_search_server.py`：本地 SearXNG 形状的搜索 mock，用于 UI 和搜索链路测试。
 - `tools/cdp_capture.mjs` / `tools/cdp_actions.mjs`：无头 Edge + CDP 截图与交互。
-- `tools/live_opencode_check_test.dart`、`tools/live_failure_check_test.dart`：需要 `OC_KEY` 的真实 OpenCode Go 链路检查，不进入默认测试集。
+- `tool/live_opencode_check_test.dart`：需要 `OC_KEY` 的真实 OpenCode Go 链路检查，不进入默认测试集。
 
 如果 Gradle Wrapper 下载发行版时遇到证书问题，可以用 Android Studio 打开 `android/` 构建，或使用本机已缓存的 Gradle 发行版执行 `assembleRelease`。
 
