@@ -185,7 +185,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     showAboutDialog(
       context: context,
       applicationName: 'Lumen',
-      applicationVersion: '1.0.5',
+      applicationVersion: '1.0.6',
       applicationIcon: const LumenMark(size: 44),
       children: [
         Text(
@@ -469,7 +469,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   title: '关于',
                   children: [
                     SettingsTile(
-                      title: 'Lumen 1.0.5',
+                      title: 'Lumen 1.0.6',
                       subtitle: '本地优先 · 多厂商 · 长期记忆',
                       icon: Icons.info_outline_rounded,
                       onTap: _about,

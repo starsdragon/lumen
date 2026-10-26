@@ -9,7 +9,7 @@
   [![Android](https://img.shields.io/badge/Android-7.0%2B-3DDC84?style=flat-square&logo=android&logoColor=white)](#android)
   [![Web](https://img.shields.io/badge/Web-CanvasKit-4285F4?style=flat-square&logo=googlechrome&logoColor=white)](#web)
   [![License](https://img.shields.io/badge/license-MIT-2ea44f?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/version-1.0.5-426EFE?style=flat-square)](https://github.com/starsdragon/lumen/releases)
+  [![Version](https://img.shields.io/badge/version-1.0.6-426EFE?style=flat-square)](https://github.com/starsdragon/lumen/releases)
   [![Stars](https://img.shields.io/github/stars/starsdragon/lumen?style=flat-square&color=426EFE)](https://github.com/starsdragon/lumen/stargazers)
 </div>
 
@@ -85,6 +85,7 @@ flutter build apk --release
 - 服务地址、API Key、模型 ID 和请求参数都可以在设置里修改。
 - 模型清单通过服务端接口读取；读取失败时保留本地缓存。
 - 模型选择器和厂商模型列表里有齿轮入口，可设置输入 token 上限和输出 token 上限；输出留空表示自动。
+- 厂商模型列表支持手动添加模型，并可编辑纯文本/多模态、思考和工具能力；已有中转站模板同样适用。
 - 输入上限决定上下文裁剪预算，输出上限用于单次请求；实际可用值仍受服务端限制。
 - 覆盖值按 `providerId::modelId` 保存在本地设置里，模型列表刷新不会覆盖。
 - 不同服务支持的参数不一致，客户端会按返回的错误做基础降级。

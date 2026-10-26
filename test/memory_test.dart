@@ -79,4 +79,111 @@ void main() {
 
     await database.close();
   });
+
+  test('memory updates replace changed facts but keep paraphrases deduplicated', () async {
+    final database = await databaseFactoryMemory.openDatabase('lumen-memory-update-test.db');
+    final repository = AppRepository(AppDatabase(database), SecretStore());
+    final controller = MemoriesController(repository);
+    await controller.load();
+
+    await controller.mergeExtraction(
+      {
+        'profile_updates': {'location': '杭州'},
+        'memories': [
+          {
+            'content': '用户目前居住在杭州，从事软件开发工作，习惯先看结论再看理由。',
+            'category': 'identity',
+            'importance': 3,
+            'confidence': 0.8,
+          }
+        ],
+      },
+      'conv-old',
+    );
+
+    final changed = await controller.mergeExtraction(
+      {
+        'profile_updates': {'location': '苏州'},
+        'memories': [
+          {
+            'content': '用户目前居住在苏州，从事软件开发工作，习惯先看结论再看理由。',
+            'category': 'identity',
+            'importance': 4,
+            'confidence': 0.9,
+          }
+        ],
+      },
+      'conv-new',
+    );
+
+    expect(changed, greaterThan(0));
+    expect(controller.profile.location, '苏州');
+    expect(controller.memories, hasLength(1));
+    expect(controller.memories.single.content, contains('苏州'));
+    expect(controller.memories.single.content, isNot(contains('杭州')));
+    expect(controller.memories.single.importance, 4);
+    expect(controller.memories.single.confidence, 0.9);
+
+    await controller.mergeExtraction(
+      {
+        'memories': [
+          {
+            'content': '用户喜欢先看结论，然后根据理由判断是否继续深入阅读。',
+            'category': 'preference',
+            'importance': 3,
+            'confidence': 0.8,
+          }
+        ],
+      },
+      'conv-old-preference',
+    );
+    await controller.mergeExtraction(
+      {
+        'memories': [
+          {
+            'content': '用户不喜欢先看结论，然后根据理由判断是否继续深入阅读。',
+            'category': 'preference',
+            'importance': 4,
+            'confidence': 0.9,
+          }
+        ],
+      },
+      'conv-new-preference',
+    );
+    final preference = controller.memories.firstWhere(
+      (memory) => memory.category == MemoryCategory.preference,
+    );
+    expect(preference.content, contains('不喜欢'));
+
+    await controller.mergeExtraction(
+      {
+        'memories': [
+          {
+            'content': '用户习惯在周末阅读技术文章，并做笔记。',
+            'category': 'preference',
+            'importance': 3,
+            'confidence': 0.8,
+          }
+        ],
+      },
+      'conv-note',
+    );
+    final beforeParaphrase = controller.memories.length;
+    await controller.mergeExtraction(
+      {
+        'memories': [
+          {
+            'content': '用户习惯在周末阅读技术文章，并做笔记！',
+            'category': 'preference',
+            'importance': 3,
+            'confidence': 0.85,
+          }
+        ],
+      },
+      'conv-paraphrase',
+    );
+    expect(controller.memories.length, beforeParaphrase);
+
+    await database.close();
+  });
 }

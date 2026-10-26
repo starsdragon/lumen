@@ -748,8 +748,10 @@ class MemoriesController extends ChangeNotifier {
   }
 
   Future<int> mergeExtraction(Map<String, dynamic> json, String conversationId) async {
+    final oldProfile = profile.copyWith();
     final updates = json['profile_updates'];
     var changed = 0;
+    var touched = false;
     if (updates is Map) {
       final map = updates.map((k, v) => MapEntry('$k', v));
       String read(String key) => '${map[key] ?? ''}'.trim();
@@ -825,15 +827,41 @@ class MemoriesController extends ChangeNotifier {
         final confidence = ((map['confidence'] as num?)?.toDouble() ?? 0.75).clamp(0.0, 1.0);
         MemoryItem? duplicate;
         for (final existing in memories) {
-          if (_similar(existing.content, content)) {
+          if (_similar(existing.content, content) ||
+              _profileValueChanged(
+                existing.content,
+                content,
+                oldProfile,
+                profile,
+              )) {
             duplicate = existing;
             break;
           }
         }
         if (duplicate != null) {
-          if (importance > duplicate.importance) duplicate.importance = importance;
-          if (confidence > duplicate.confidence) duplicate.confidence = confidence;
+          var duplicateChanged = false;
+          if (_looksLikeFactUpdate(
+            duplicate.content,
+            content,
+            oldProfile,
+            profile,
+          )) {
+            duplicate.content = content;
+            duplicate.category = category;
+            duplicate.sourceConversationId = conversationId;
+            changed++;
+            duplicateChanged = true;
+          }
+          if (importance > duplicate.importance) {
+            duplicate.importance = importance;
+            duplicateChanged = true;
+          }
+          if (confidence > duplicate.confidence) {
+            duplicate.confidence = confidence;
+            duplicateChanged = true;
+          }
           duplicate.lastUsedAt = DateTime.now().toUtc();
+          if (duplicateChanged) touched = true;
           await repo.db.saveMemory(duplicate);
         } else {
           final item = MemoryItem(
@@ -851,7 +879,7 @@ class MemoriesController extends ChangeNotifier {
         }
       }
     }
-    if (changed > 0) notifyListeners();
+    if (changed > 0 || touched) notifyListeners();
     return changed;
   }
 }
@@ -956,6 +984,86 @@ String _normalize(String value) => value.toLowerCase().replaceAll(
       RegExp(r'''[\s，。！？,.!?、；;：:“”"'（）()\[\]【】]'''),
       '',
     );
+
+bool _profileValueChanged(
+  String oldText,
+  String newText,
+  UserProfile oldProfile,
+  UserProfile newProfile,
+) {
+  final oldNorm = _normalize(oldText);
+  final newNorm = _normalize(newText);
+  final profilePairs = <(String, String)>[
+    (oldProfile.name, newProfile.name),
+    (oldProfile.occupation, newProfile.occupation),
+    (oldProfile.location, newProfile.location),
+    (oldProfile.education, newProfile.education),
+    (oldProfile.thinkingStyle, newProfile.thinkingStyle),
+  ];
+  for (final pair in profilePairs) {
+    final oldValue = _normalize(pair.$1);
+    final newValue = _normalize(pair.$2);
+    if (oldValue.isEmpty || newValue.isEmpty || oldValue == newValue) continue;
+    if (oldNorm.contains(oldValue) && newNorm.contains(newValue)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// Similar text can still describe a changed fact. Only explicit update
+/// signals are allowed to replace the stored content; otherwise a high
+/// similarity score is treated as paraphrase and the entry is deduplicated.
+bool _looksLikeFactUpdate(
+  String oldText,
+  String newText,
+  UserProfile oldProfile,
+  UserProfile newProfile,
+) {
+  final oldNorm = _normalize(oldText);
+  final newNorm = _normalize(newText);
+  if (oldNorm == newNorm) return false;
+
+  if (_profileValueChanged(oldText, newText, oldProfile, newProfile)) {
+    return true;
+  }
+
+  if (_hasNegation(oldNorm) != _hasNegation(newNorm)) return true;
+
+  final oldNumbers = _numbersIn(oldNorm);
+  final newNumbers = _numbersIn(newNorm);
+  if (oldNumbers.isNotEmpty &&
+      newNumbers.isNotEmpty &&
+      (oldNumbers.length != newNumbers.length ||
+          !oldNumbers.every(newNumbers.contains))) {
+    return true;
+  }
+
+  const changeCues = [
+    '现在',
+    '目前',
+    '已经',
+    '搬到',
+    '改为',
+    '换成',
+    '更新为',
+    '不再',
+    '转而',
+    '现居',
+    '现任',
+    '新地址',
+  ];
+  final hasNewCue = changeCues.any(newNorm.contains);
+  final hasOldCue = changeCues.any(oldNorm.contains);
+  return hasNewCue && !hasOldCue;
+}
+
+bool _hasNegation(String value) => RegExp(
+      r'(不喜欢|不想|不爱|不再|没有|不是|不会|不能|从未|从不|并不|不常|不喝|不吃|不去|不玩|不读|不看|不用|无须|无需)',
+    ).hasMatch(value);
+
+List<String> _numbersIn(String value) =>
+    RegExp(r'\d+(?:\.\d+)?').allMatches(value).map((match) => match.group(0)!).toList();
 
 bool _similar(String a, String b) {
   final na = _normalize(a);
