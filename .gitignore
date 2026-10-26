@@ -53,3 +53,6 @@ app.*.map.json
 
 # Scratch screenshots; README previews live in docs/assets/readme
 /shots/
+
+# Local promo render workspace; the final film is a GitHub Release asset
+/promo/

@@ -15,7 +15,11 @@
 
 Lumen 是一个本地优先的 Flutter AI 客户端，负责连接你选择的模型、保存记忆、组织搜索与工具调用。它把模型 API、长期记忆、联网搜索、MCP 工具、文件和图片放进同一个对话界面。模型由你选，Key 由你保管，会话和记忆默认只存在本机。
 
-![Lumen 首屏](docs/assets/readme/hero.png)
+## Promo
+
+[![Lumen 产品片](docs/assets/readme/promo-poster.png)](https://github.com/starsdragon/lumen/releases/download/v1.0.4/Lumen-1.0.4-promo.mp4)
+
+79 秒 · 1080p · 中文旁白 · 原创配乐。字幕文件在同一个 Release 资产中。
 
 ## 主要特性
 
