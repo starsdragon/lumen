@@ -6,7 +6,7 @@
 
   [![Flutter](https://img.shields.io/badge/Flutter-3.38-02569B?style=flat-square&logo=flutter&logoColor=white)](https://flutter.dev)
   [![Dart](https://img.shields.io/badge/Dart-3.10-0175C2?style=flat-square&logo=dart&logoColor=white)](https://dart.dev)
-  [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=flat-square&logo=android&logoColor=white)](#android)
+  [![Android](https://img.shields.io/badge/Android-7.0%2B-3DDC84?style=flat-square&logo=android&logoColor=white)](#android)
   [![Web](https://img.shields.io/badge/Web-CanvasKit-4285F4?style=flat-square&logo=googlechrome&logoColor=white)](#web)
   [![License](https://img.shields.io/badge/license-MIT-2ea44f?style=flat-square)](LICENSE)
   [![Version](https://img.shields.io/badge/version-1.0.4-426EFE?style=flat-square)](https://github.com/starsdragon/lumen/releases)
