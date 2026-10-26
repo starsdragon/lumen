@@ -6,6 +6,8 @@ import '../../core/utils.dart';
 import '../../data/models.dart';
 import '../../services/controllers.dart';
 import '../common/widgets.dart';
+import '../settings/model_editor_dialog.dart';
+import 'model_settings_sheet.dart';
 
 class ModelPickerOutcome {
   const ModelPickerOutcome.selection(this.selection) : configure = false;
@@ -57,10 +59,22 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
     super.dispose();
   }
 
+  Future<void> _editModel(ProviderConfig provider, ModelInfo model) async {
+    final updated = await showModelEditorDialog(
+      context,
+      existingIds: provider.models.map((m) => m.id).toSet(),
+      initial: model,
+    );
+    if (updated == null || !mounted) return;
+    await context.read<ProvidersController>().updateModel(provider, updated);
+    if (mounted) showToast(context, '已更新「${updated.name}」的能力');
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     final providers = context.watch<ProvidersController>();
+    final appSettings = context.watch<SettingsController>();
     final query = _search.text.trim().toLowerCase();
     final ready = providers.readyProviders;
     final grouped = <(ProviderConfig, List<ModelInfo>)>[];
@@ -99,7 +113,7 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
                         Text(
                           widget.imageMode
                               ? '不同厂商的图像模型，支持比例与提示词'
-                              : '来自各平台原生 /models 接口，自动更新',
+                              : '来自各平台原生 /models 接口；齿轮可设置输入/输出上限',
                           style: context.text.bodySmall?.copyWith(color: c.textTertiary),
                         ),
                       ],
@@ -183,12 +197,22 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
                             _ModelRow(
                               provider: group.$1,
                               model: model,
+                              limit: appSettings.settings.modelLimits[
+                                  modelLimitKey(group.$1.id, model.id)],
                               selected: group.$1.id == widget.providerId &&
                                   model.id == widget.modelId,
                               onTap: () => Navigator.pop(
                                 context,
                                 ModelPickerOutcome.selection(ModelSelection(group.$1, model)),
                               ),
+                              onSettings: () => showModelTokenSettings(
+                                context,
+                                provider: group.$1,
+                                model: model,
+                              ),
+                              onEdit: group.$1.demo
+                                  ? null
+                                  : () => _editModel(group.$1, model),
                             ),
                           const SizedBox(height: 8),
                         ],
@@ -342,18 +366,26 @@ class _ModelRow extends StatelessWidget {
   const _ModelRow({
     required this.provider,
     required this.model,
+    required this.limit,
     required this.selected,
     required this.onTap,
+    required this.onSettings,
+    this.onEdit,
   });
 
   final ProviderConfig provider;
   final ModelInfo model;
+  final ModelTokenLimit? limit;
   final bool selected;
   final VoidCallback onTap;
+  final VoidCallback onSettings;
+  final VoidCallback? onEdit;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final input = effectiveInputLimit(model, limit);
+    final output = effectiveOutputLimit(model, limit);
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Material(
@@ -380,24 +412,26 @@ class _ModelRow extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 3),
-                      Row(
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 3,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           Text(
-                            tokenLabel(model.contextWindow),
-                            style: context.text.labelSmall?.copyWith(color: c.textTertiary),
+                            '${tokenLabel(input)} 输入 · ${tokenLabel(output)} 输出',
+                            style: context.text.labelSmall?.copyWith(
+                              color: limit == null ? c.textTertiary : c.primary,
+                              fontSize: 9.5,
+                            ),
                           ),
-                          const SizedBox(width: 6),
                           if (model.vision) const CapabilityChip(label: '视觉', icon: Icons.image_outlined),
                           if (model.reasoning) ...[
-                            const SizedBox(width: 3),
                             const CapabilityChip(label: '思考', icon: Icons.psychology_alt_outlined),
                           ],
                           if (model.imageGeneration) ...[
-                            const SizedBox(width: 3),
                             const CapabilityChip(label: '生图', icon: Icons.auto_awesome_outlined),
                           ],
                           if (model.tools && !model.imageGeneration) ...[
-                            const SizedBox(width: 3),
                             const CapabilityChip(label: '工具', icon: Icons.build_outlined),
                           ],
                         ],
@@ -405,7 +439,27 @@ class _ModelRow extends StatelessWidget {
                     ],
                   ),
                 ),
-                const SizedBox(width: 8),
+                if (onEdit != null)
+                  IconButton(
+                    tooltip: '编辑模型能力',
+                    visualDensity: VisualDensity.compact,
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                    padding: EdgeInsets.zero,
+                    icon: Icon(Icons.edit_outlined, size: 16, color: c.textTertiary),
+                    onPressed: onEdit,
+                  ),
+                IconButton(
+                  tooltip: limit == null ? '设置输入/输出 token 上限' : '已自定义 token 上限',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  padding: EdgeInsets.zero,
+                  icon: Icon(
+                    Icons.tune_rounded,
+                    size: 17,
+                    color: limit == null ? c.textTertiary : c.primary,
+                  ),
+                  onPressed: onSettings,
+                ),
                 if (selected)
                   Icon(Icons.check_circle_rounded, size: 19, color: c.primary)
                 else

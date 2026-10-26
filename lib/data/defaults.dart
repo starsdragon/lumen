@@ -173,7 +173,7 @@ List<ProviderConfig> buildDefaultProviders() {
       docsUrl: 'https://opencode.ai/docs/go',
       sortOrder: 60,
       models: const [
-        ModelInfo(id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', contextWindow: 131072),
+        ModelInfo(id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', contextWindow: 1000000),
         ModelInfo(id: 'glm-5.3-flash', name: 'GLM-5.3 Flash', contextWindow: 200000),
         ModelInfo(id: 'glm-5.3', name: 'GLM-5.3', contextWindow: 200000),
         ModelInfo(id: 'glm-5.2', name: 'GLM-5.2', contextWindow: 200000),

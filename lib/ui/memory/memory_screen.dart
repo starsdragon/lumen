@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -5,6 +9,7 @@ import '../../core/theme.dart';
 import '../../core/utils.dart';
 import '../../data/models.dart';
 import '../../services/controllers.dart';
+import '../../services/memory_transfer.dart';
 import '../common/widgets.dart';
 
 class MemoryScreen extends StatefulWidget {
@@ -19,6 +24,8 @@ class MemoryScreen extends StatefulWidget {
 class _MemoryScreenState extends State<MemoryScreen> {
   final TextEditingController _search = TextEditingController();
   MemoryCategory? _category;
+
+  bool _transferBusy = false;
 
   @override
   void dispose() {
@@ -49,6 +56,129 @@ class _MemoryScreenState extends State<MemoryScreen> {
     if (mounted) showToast(context, '记忆已清空');
   }
 
+  Future<void> _exportMemories() async {
+    final memories = context.read<MemoriesController>();
+    if (memories.profile.isEmpty && memories.memories.isEmpty) {
+      showToast(context, '还没有可导出的记忆');
+      return;
+    }
+    setState(() => _transferBusy = true);
+    try {
+      final json = memories.exportBundle().encode();
+      final stamp = DateTime.now().toIso8601String().substring(0, 10);
+      final saved = await saveBytesToDevice(
+        Uint8List.fromList(utf8.encode(json)),
+        'lumen-memories-$stamp.json',
+        mime: 'application/json',
+        dialogTitle: '导出长期记忆',
+      );
+      if (saved && mounted) showToast(context, '记忆已导出');
+    } catch (error) {
+      if (mounted) showToast(context, '导出失败：$error');
+    } finally {
+      if (mounted) setState(() => _transferBusy = false);
+    }
+  }
+
+  Future<void> _importMemories() async {
+    if (_transferBusy) return;
+    setState(() => _transferBusy = true);
+    try {
+      final files = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['json'],
+      );
+      if (files.isEmpty) return;
+      final file = files.first;
+      final length = await file.length();
+      if (length != null && length > 5 * 1024 * 1024) {
+        if (mounted) showToast(context, '记忆文件不能超过 5MB');
+        return;
+      }
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) {
+        if (mounted) showToast(context, '无法读取文件内容');
+        return;
+      }
+      final bundle = MemoryBundle.decode(utf8.decode(bytes));
+      if (bundle.profile.isEmpty && bundle.memories.isEmpty) {
+        if (mounted) showToast(context, '文件里没有可导入的记忆');
+        return;
+      }
+      if (!mounted) return;
+      final mode = await _askImportMode(bundle);
+      if (mode == null || !mounted) return;
+      final controller = context.read<MemoriesController>();
+      if (mode == MemoryImportMode.replace &&
+          (!controller.profile.isEmpty || controller.memories.isNotEmpty)) {
+        final confirmed = await showConfirmDialog(
+          context,
+          title: '替换全部记忆？',
+          message: '当前画像与 ${controller.memories.length} 条记忆会先被清空，再写入文件内容。这个操作无法撤销。',
+          confirmLabel: '替换',
+          danger: true,
+        );
+        if (!confirmed || !mounted) return;
+      }
+      final result = await controller.importBundle(bundle, mode: mode);
+      if (mounted) showToast(context, result.summary);
+    } on FormatException catch (error) {
+      if (mounted) showToast(context, error.message);
+    } catch (error) {
+      if (mounted) showToast(context, '导入失败：$error');
+    } finally {
+      if (mounted) setState(() => _transferBusy = false);
+    }
+  }
+
+  Future<MemoryImportMode?> _askImportMode(MemoryBundle bundle) {
+    final name = bundle.profile.displayName;
+    final details = <String>[
+      if (!bundle.profile.isEmpty) '画像：$name',
+      '记忆：${bundle.memories.length} 条',
+      if (bundle.exportedAt != null) '导出时间：${formatDate(bundle.exportedAt!)}',
+    ];
+    return showDialog<MemoryImportMode>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('导入长期记忆'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final line in details)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 5),
+                child: Text(line),
+              ),
+            const SizedBox(height: 8),
+            Text(
+              '“合并”会保留现有内容并补充缺失信息；“替换”会用文件内容覆盖当前记忆库。',
+              style: context.text.bodySmall?.copyWith(
+                color: context.colors.textSecondary,
+                height: 1.55,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, MemoryImportMode.merge),
+            child: const Text('合并'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, MemoryImportMode.replace),
+            child: const Text('替换'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -70,7 +200,11 @@ class _MemoryScreenState extends State<MemoryScreen> {
                     embedded: widget.embedded,
                     count: memories.memories.length,
                     onAdd: _addMemory,
+                    onExport: _exportMemories,
+                    onImport: _importMemories,
                     onClear: memories.memories.isEmpty && memories.profile.isEmpty ? null : _clear,
+                    hasData: memories.memories.isNotEmpty || !memories.profile.isEmpty,
+                    busy: _transferBusy,
                   )
                 else
                   _PushedHeader(count: memories.memories.length),
@@ -170,12 +304,13 @@ class _MemoryScreenState extends State<MemoryScreen> {
       appBar: AppBar(
         title: const Text('长期记忆'),
         actions: [
-          if (hasData)
-            IconButton(
-              tooltip: '清空记忆',
-              icon: const Icon(Icons.delete_outline_rounded, size: 20),
-              onPressed: _clear,
-            ),
+          _MemoryTransferMenu(
+            onExport: _exportMemories,
+            onImport: _importMemories,
+            onClear: hasData ? _clear : null,
+            hasData: hasData,
+            busy: _transferBusy,
+          ),
           IconButton(
             tooltip: '添加记忆',
             icon: const Icon(Icons.add_rounded),
@@ -233,12 +368,20 @@ class _Header extends StatelessWidget {
     required this.embedded,
     required this.count,
     required this.onAdd,
+    required this.onExport,
+    required this.onImport,
+    required this.hasData,
+    required this.busy,
     this.onClear,
   });
 
   final bool embedded;
   final int count;
   final VoidCallback onAdd;
+  final VoidCallback onExport;
+  final VoidCallback onImport;
+  final bool hasData;
+  final bool busy;
   final VoidCallback? onClear;
 
   @override
@@ -276,12 +419,13 @@ class _Header extends StatelessWidget {
           children: [
             Row(
               children: [
-                if (onClear != null)
-                  IconButton(
-                    tooltip: '清空记忆',
-                    icon: const Icon(Icons.delete_outline_rounded, size: 19),
-                    onPressed: onClear,
-                  ),
+                _MemoryTransferMenu(
+                  onExport: onExport,
+                  onImport: onImport,
+                  onClear: onClear,
+                  hasData: hasData,
+                  busy: busy,
+                ),
                 FilledButton.icon(
                   onPressed: onAdd,
                   icon: const Icon(Icons.add_rounded, size: 17),
@@ -303,6 +447,82 @@ class _Header extends StatelessWidget {
               ),
           ],
         ),
+      ],
+    );
+  }
+}
+
+class _MemoryTransferMenu extends StatelessWidget {
+  const _MemoryTransferMenu({
+    required this.onExport,
+    required this.onImport,
+    required this.hasData,
+    required this.busy,
+    this.onClear,
+  });
+
+  final VoidCallback onExport;
+  final VoidCallback onImport;
+  final VoidCallback? onClear;
+  final bool hasData;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    if (busy) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 12),
+        child: SizedBox(
+          width: 17,
+          height: 17,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    return PopupMenuButton<String>(
+      tooltip: '记忆库操作',
+      icon: Icon(Icons.more_horiz_rounded, size: 21, color: c.textSecondary),
+      onSelected: (value) {
+        if (value == 'export') onExport();
+        if (value == 'import') onImport();
+        if (value == 'clear') onClear?.call();
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem<String>(
+          value: 'export',
+          enabled: hasData,
+          child: Row(
+            children: [
+              Icon(Icons.download_outlined, size: 18, color: c.textSecondary),
+              const SizedBox(width: 10),
+              const Text('导出记忆'),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'import',
+          child: Row(
+            children: [
+              Icon(Icons.upload_outlined, size: 18, color: c.textSecondary),
+              const SizedBox(width: 10),
+              const Text('导入记忆'),
+            ],
+          ),
+        ),
+        if (onClear != null) ...[
+          const PopupMenuDivider(),
+          PopupMenuItem<String>(
+            value: 'clear',
+            child: Row(
+              children: [
+                Icon(Icons.delete_outline_rounded, size: 18, color: c.danger),
+                const SizedBox(width: 10),
+                Text('清空记忆', style: TextStyle(color: c.danger)),
+              ],
+            ),
+          ),
+        ],
       ],
     );
   }

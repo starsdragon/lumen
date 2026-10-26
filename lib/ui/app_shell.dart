@@ -481,7 +481,7 @@ class _SidebarState extends State<_Sidebar> {
                       Icon(Icons.lock_outline_rounded, size: 11, color: c.textTertiary),
                       const SizedBox(width: 4),
                       Text(
-                        '本地优先 · Lumen 1.0.4',
+                        '本地优先 · Lumen 1.0.5',
                         style: context.text.labelSmall?.copyWith(
                           color: c.textTertiary,
                           fontSize: 9.5,

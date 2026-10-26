@@ -77,8 +77,22 @@ class AppDatabase {
       }
       final ids = existing.models.map((m) => m.id).toSet();
       final missing = fallback.models.where((m) => !ids.contains(m.id)).toList();
+      var changed = missing.isNotEmpty;
       if (missing.isNotEmpty) {
         existing.models = [...existing.models, ...missing];
+      }
+      // Curated context sizes can be larger than what a generic /models
+      // endpoint reports. Keep the larger default for existing installs.
+      for (final curated in fallback.models) {
+        final index = existing.models.indexWhere((m) => m.id == curated.id);
+        if (index >= 0 && curated.contextWindow > existing.models[index].contextWindow) {
+          existing.models[index] = existing.models[index].copyWith(
+            contextWindow: curated.contextWindow,
+          );
+          changed = true;
+        }
+      }
+      if (changed) {
         await _providers.record(existing.id).put(db, existing.toJson());
       }
     }
@@ -173,6 +187,19 @@ class AppDatabase {
 
   Future<void> clearMemories() async {
     await _memories.delete(db);
+  }
+
+  Future<void> replaceMemories(
+    UserProfile profile,
+    List<MemoryItem> memories,
+  ) async {
+    await db.transaction((txn) async {
+      await _memories.delete(txn);
+      await _meta.record('profile').put(txn, profile.toJson());
+      for (final memory in memories) {
+        await _memories.record(memory.id).put(txn, memory.toJson());
+      }
+    });
   }
 
   Future<List<McpServerConfig>> loadMcpServers() async {

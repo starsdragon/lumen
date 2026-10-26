@@ -9,6 +9,8 @@ import '../../core/utils.dart';
 import '../../data/models.dart';
 import '../../services/controllers.dart';
 import '../common/widgets.dart';
+import '../chat/model_settings_sheet.dart';
+import 'model_editor_dialog.dart';
 
 class ProvidersScreen extends StatelessWidget {
   const ProvidersScreen({super.key});
@@ -425,6 +427,7 @@ class _ProviderEditScreenState extends State<ProviderEditScreen> {
       await providers.refreshModels(_provider);
       final current = providers.byId(_provider.id);
       if (mounted) {
+        setState(() => _provider.models = current?.models ?? _provider.models);
         showToast(context, '已获取 ${current?.models.length ?? 0} 个模型');
       }
     } catch (error) {
@@ -475,12 +478,82 @@ class _ProviderEditScreenState extends State<ProviderEditScreen> {
     return decoded.map((key, value) => MapEntry('$key', value));
   }
 
+  String _tokenSummary(AppSettings settings, ProviderConfig provider, ModelInfo model) {
+    final limit = settings.modelLimits[modelLimitKey(provider.id, model.id)];
+    return '${tokenLabel(effectiveInputLimit(model, limit))} 输入 · '
+        '${tokenLabel(effectiveOutputLimit(model, limit))} 输出';
+  }
+
+  bool _hasCustomLimit(AppSettings settings, ProviderConfig provider, ModelInfo model) =>
+      settings.modelLimits[modelLimitKey(provider.id, model.id)] != null;
+
+  Future<void> _addModel() async {
+    final model = await showModelEditorDialog(
+      context,
+      existingIds: _provider.models.map((m) => m.id).toSet(),
+    );
+    if (model == null || !mounted) return;
+    final providers = context.read<ProvidersController>();
+    final exists = providers.byId(_provider.id) != null;
+    setState(() => _provider.models = [..._provider.models, model]);
+    if (exists) {
+      await providers.updateModel(_provider, model);
+    }
+    if (mounted) {
+      showToast(context, exists ? '已添加「${model.name}」' : '已添加「${model.name}」，保存厂商后生效');
+    }
+  }
+
+  Future<void> _editModel(ModelInfo model) async {
+    final updated = await showModelEditorDialog(
+      context,
+      existingIds: _provider.models.map((m) => m.id).toSet(),
+      initial: model,
+    );
+    if (updated == null || !mounted) return;
+    final providers = context.read<ProvidersController>();
+    final exists = providers.byId(_provider.id) != null;
+    setState(() {
+      _provider.models = [
+        for (final item in _provider.models)
+          if (item.id == model.id) updated else item,
+      ];
+    });
+    if (exists) {
+      await providers.updateModel(_provider, updated);
+    }
+    if (mounted) {
+      showToast(context, exists ? '已更新「${updated.name}」' : '已更新「${updated.name}」，保存厂商后生效');
+    }
+  }
+
+  Future<void> _removeModel(ModelInfo model) async {
+    final ok = await showConfirmDialog(
+      context,
+      title: '删除这个模型？',
+      message: '「${model.name}」会从当前厂商的模型列表移除。已同步的模型会在下次刷新时恢复。',
+      confirmLabel: '删除',
+      danger: true,
+    );
+    if (!ok || !mounted) return;
+    final providers = context.read<ProvidersController>();
+    final settings = context.read<SettingsController>();
+    final exists = providers.byId(_provider.id) != null;
+    setState(() => _provider.models = _provider.models.where((m) => m.id != model.id).toList());
+    if (exists) {
+      await providers.removeModel(_provider, model.id);
+    }
+    await settings.setModelLimit(_provider.id, model.id, null);
+    if (mounted) showToast(context, '已删除「${model.name}」');
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     final providers = context.watch<ProvidersController>();
+    final appSettings = context.watch<SettingsController>();
     final current = providers.byId(_provider.id) ?? _provider;
-    final models = current.models;
+    final models = _provider.models;
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -757,6 +830,16 @@ class _ProviderEditScreenState extends State<ProviderEditScreen> {
                         '${models.length}',
                         style: context.text.labelSmall?.copyWith(color: c.textTertiary),
                       ),
+                      const SizedBox(width: 6),
+                      TextButton.icon(
+                        onPressed: _addModel,
+                        icon: const Icon(Icons.add_rounded, size: 15),
+                        label: const Text('添加模型'),
+                        style: TextButton.styleFrom(
+                          minimumSize: const Size(0, 30),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ),
                       const Spacer(),
                       if (current.modelsSyncedAt != null)
                         Text(
@@ -811,6 +894,8 @@ class _ProviderEditScreenState extends State<ProviderEditScreen> {
                                             ),
                                           ),
                                         ),
+                                        if (model.source == 'manual')
+                                          const CapabilityChip(label: '手动'),
                                         if (model.vision) const CapabilityChip(label: '视觉'),
                                         if (model.reasoning) ...[
                                           const SizedBox(width: 3),
@@ -822,12 +907,70 @@ class _ProviderEditScreenState extends State<ProviderEditScreen> {
                                         ],
                                         const SizedBox(width: 5),
                                         Text(
-                                          tokenLabel(model.contextWindow),
+                                          _tokenSummary(appSettings.settings, current, model),
                                           style: context.text.labelSmall?.copyWith(
-                                            color: c.textTertiary,
+                                            color: _hasCustomLimit(appSettings.settings, current, model)
+                                                ? c.primary
+                                                : c.textTertiary,
                                             fontSize: 9,
                                           ),
                                         ),
+                                        if (!current.demo)
+                                          IconButton(
+                                            tooltip: '编辑模型能力',
+                                            visualDensity: VisualDensity.compact,
+                                            constraints: const BoxConstraints(
+                                              minWidth: 28,
+                                              minHeight: 28,
+                                            ),
+                                            padding: EdgeInsets.zero,
+                                            icon: Icon(
+                                              Icons.edit_outlined,
+                                              size: 15,
+                                              color: c.textTertiary,
+                                            ),
+                                            onPressed: () => _editModel(model),
+                                          ),
+                                        IconButton(
+                                          tooltip: '设置输入/输出 token 上限',
+                                          visualDensity: VisualDensity.compact,
+                                          constraints: const BoxConstraints(
+                                            minWidth: 28,
+                                            minHeight: 28,
+                                          ),
+                                          padding: EdgeInsets.zero,
+                                          icon: Icon(
+                                            Icons.tune_rounded,
+                                            size: 15,
+                                            color: _hasCustomLimit(appSettings.settings, current, model)
+                                                ? c.primary
+                                                : c.textTertiary,
+                                          ),
+                                          onPressed: () => showModelTokenSettings(
+                                            context,
+                                            provider: current,
+                                            model: model,
+                                          ),
+                                        ),
+                                        if (model.source == 'manual')
+                                          PopupMenuButton<String>(
+                                            tooltip: '编辑或删除模型',
+                                            padding: EdgeInsets.zero,
+                                            icon: Icon(
+                                              Icons.more_vert_rounded,
+                                              size: 16,
+                                              color: c.textTertiary,
+                                            ),
+                                            onSelected: (value) {
+                                              if (value == 'delete') _removeModel(model);
+                                            },
+                                            itemBuilder: (context) => const [
+                                              PopupMenuItem(
+                                                value: 'delete',
+                                                child: Text('删除模型'),
+                                              ),
+                                            ],
+                                          ),
                                       ],
                                     ),
                                   ),

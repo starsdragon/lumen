@@ -35,6 +35,20 @@ Map<String, String> _stringMap(Object? value) {
   return <String, String>{};
 }
 
+Map<String, ModelTokenLimit> _modelLimitsFromJson(Object? value) {
+  final result = <String, ModelTokenLimit>{};
+  if (value is! Map) return result;
+  value.forEach((key, raw) {
+    if (raw is! Map) return;
+    final map = raw.map((k, v) => MapEntry('$k', v));
+    final limit = ModelTokenLimit.fromJson(map);
+    if (key.toString().trim().isNotEmpty && limit.isValid) {
+      result[key.toString()] = limit;
+    }
+  });
+  return result;
+}
+
 Map<String, dynamic>? _jsonMap(Object? value) {
   if (value is Map) return value.map((k, v) => MapEntry('$k', v));
   if (value is String && value.trim().isNotEmpty) {
@@ -357,6 +371,66 @@ class ModelInfo {
         source: '${json['source'] ?? 'builtin'}',
       );
 }
+
+/// Per-model limits override the advisory metadata returned by a provider.
+/// They live in app settings rather than in the provider model list, so a
+/// `/models` refresh never discards a user's correction.
+class ModelTokenLimit {
+  const ModelTokenLimit({
+    required this.inputTokens,
+    this.outputTokens = 0,
+  });
+
+  final int inputTokens;
+
+  /// 0 means "derive from the input window".
+  final int outputTokens;
+
+  bool get isValid =>
+      inputTokens >= 1024 &&
+      inputTokens <= 10000000 &&
+      (outputTokens == 0 ||
+          (outputTokens >= 256 &&
+              outputTokens <= 131072 &&
+              outputTokens <= inputTokens));
+
+  int get outputLimit => outputTokens > 0 ? outputTokens : autoOutputTokenLimit(inputTokens);
+
+  ModelTokenLimit copyWith({int? inputTokens, int? outputTokens}) => ModelTokenLimit(
+        inputTokens: inputTokens ?? this.inputTokens,
+        outputTokens: outputTokens ?? this.outputTokens,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'inputTokens': inputTokens,
+        'outputTokens': outputTokens,
+      };
+
+  factory ModelTokenLimit.fromJson(Map<String, dynamic> json) => ModelTokenLimit(
+        inputTokens: (json['inputTokens'] as num?)?.toInt() ?? 0,
+        outputTokens: (json['outputTokens'] as num?)?.toInt() ?? 0,
+      );
+}
+
+String modelLimitKey(String providerId, String modelId) => '$providerId::$modelId';
+
+/// A conservative output budget from the context window. Providers still
+/// enforce their own caps; this only keeps the request inside them.
+int autoOutputTokenLimit(int contextWindow) {
+  if (contextWindow <= 0) return 8192;
+  final raw = (contextWindow * 0.25).round();
+  if (raw < 4096) return 4096;
+  if (raw > 32768) return 32768;
+  return raw;
+}
+
+int effectiveInputLimit(ModelInfo model, ModelTokenLimit? override) =>
+    override != null && override.inputTokens > 0 ? override.inputTokens : model.contextWindow;
+
+int effectiveOutputLimit(ModelInfo model, ModelTokenLimit? override) =>
+    override != null && override.outputTokens > 0
+        ? override.outputTokens
+        : autoOutputTokenLimit(effectiveInputLimit(model, override));
 
 // ---------------------------------------------------------------------------
 // Conversation & messages
@@ -1169,7 +1243,9 @@ class AppSettings {
     this.defaultModelId = 'lumen-demo',
     this.lastUsedProviderId = '',
     this.lastUsedModelId = '',
-  }) : search = search ?? SearchConfig();
+    Map<String, ModelTokenLimit>? modelLimits,
+  })  : search = search ?? SearchConfig(),
+        modelLimits = modelLimits ?? <String, ModelTokenLimit>{};
 
   ThemeMode themeMode;
   bool onboardingDone;
@@ -1188,6 +1264,7 @@ class AppSettings {
   String defaultModelId;
   String lastUsedProviderId;
   String lastUsedModelId;
+  Map<String, ModelTokenLimit> modelLimits;
 
   Map<String, dynamic> toJson() => {
         'themeMode': themeMode.name,
@@ -1207,6 +1284,7 @@ class AppSettings {
         'defaultModelId': defaultModelId,
         'lastUsedProviderId': lastUsedProviderId,
         'lastUsedModelId': lastUsedModelId,
+        'modelLimits': modelLimits.map((key, value) => MapEntry(key, value.toJson())),
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> json) => AppSettings(
@@ -1229,6 +1307,7 @@ class AppSettings {
         defaultModelId: '${json['defaultModelId'] ?? 'lumen-demo'}',
         lastUsedProviderId: '${json['lastUsedProviderId'] ?? ''}',
         lastUsedModelId: '${json['lastUsedModelId'] ?? ''}',
+        modelLimits: _modelLimitsFromJson(json['modelLimits']),
       );
 
   AppSettings copyWith({
@@ -1249,6 +1328,7 @@ class AppSettings {
     String? defaultModelId,
     String? lastUsedProviderId,
     String? lastUsedModelId,
+    Map<String, ModelTokenLimit>? modelLimits,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -1268,6 +1348,7 @@ class AppSettings {
         defaultModelId: defaultModelId ?? this.defaultModelId,
         lastUsedProviderId: lastUsedProviderId ?? this.lastUsedProviderId,
         lastUsedModelId: lastUsedModelId ?? this.lastUsedModelId,
+        modelLimits: modelLimits ?? this.modelLimits,
       );
 }
 

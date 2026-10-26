@@ -247,9 +247,14 @@ String sanitizeFileName(String value) {
   return cleaned.isEmpty ? 'lumen_image' : cleaned;
 }
 
-Future<bool> saveBytesToDevice(Uint8List bytes, String fileName, {String mime = 'image/png'}) async {
+Future<bool> saveBytesToDevice(
+  Uint8List bytes,
+  String fileName, {
+  String mime = 'image/png',
+  String dialogTitle = '保存文件',
+}) async {
   final uri = await FilePicker.saveFile(
-    dialogTitle: '保存图片',
+    dialogTitle: dialogTitle,
     fileName: fileName,
     mimeType: mime,
     bytes: bytes,

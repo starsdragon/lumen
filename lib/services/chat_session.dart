@@ -274,25 +274,26 @@ class ChatSession extends ChangeNotifier {
     final toolbox = _buildToolbox();
     final tools = toolbox.definitions;
     final systemPrompt = _buildSystemPrompt(text, tools);
-    // Leave room for the visible answer, then use most of the model's real
-    // context window. The old fixed 26k ceiling silently truncated long
-    // conversations even on 128k/1M-token models.
-    final window = model.contextWindow > 0 ? model.contextWindow : 131072;
-    const outputReserve = 16384;
+    // Per-model overrides are stored in settings. They survive /models
+    // refreshes and let a user correct a provider's conservative metadata.
+    final tokenLimit = settings.settings.modelLimits[modelLimitKey(provider.id, model.id)];
+    final window = effectiveInputLimit(model, tokenLimit);
+    var maxOutputTokens = effectiveOutputLimit(model, tokenLimit);
+    if (maxOutputTokens > window - 2048) {
+      maxOutputTokens = window > 4096 ? window - 2048 : 2048;
+    }
+    final outputReserve = maxOutputTokens;
     final safeInput = window - outputReserve - 2048;
     final preferred = (window * 0.72).round();
     var inputBudget = preferred < safeInput ? preferred : safeInput;
     if (inputBudget < 4096) inputBudget = 4096;
-    if (inputBudget > 120000) inputBudget = 120000;
+    if (inputBudget > 900000) inputBudget = 900000;
     var historyBudget = inputBudget - estimateTokens(systemPrompt);
     if (historyBudget < 1200) historyBudget = 1200;
-    if (historyBudget > 120000) historyBudget = 120000;
+    if (historyBudget > 900000) historyBudget = 900000;
     var maxToolChars = (window * 0.06).round();
     if (maxToolChars < 1800) maxToolChars = 1800;
     if (maxToolChars > 6000) maxToolChars = 6000;
-    var maxOutputTokens = (window * 0.25).round();
-    if (maxOutputTokens < 4096) maxOutputTokens = 4096;
-    if (maxOutputTokens > 32768) maxOutputTokens = 32768;
     final history = _buildHistory(
       excludeId: assistant.id,
       tokenBudget: historyBudget,
@@ -567,6 +568,7 @@ class ChatSession extends ChangeNotifier {
           attachments: attachments,
           records: records,
           sessionId: conversation.id,
+          inputTokens: window,
           maxOutputTokens: maxOutputTokens,
         );
         if (cleanAnswer != null && cleanAnswer.trim().isNotEmpty) {
@@ -771,6 +773,7 @@ class ChatSession extends ChangeNotifier {
     required List<Attachment> attachments,
     required List<ToolCallRecord> records,
     required String sessionId,
+    required int inputTokens,
     required int maxOutputTokens,
   }) async {
     final successful = records.where((r) => !r.isError && r.resultText.trim().isNotEmpty).toList();
@@ -786,7 +789,7 @@ class ChatSession extends ChangeNotifier {
       buffer.writeln('\n\n## 本次工具实际返回的资料');
       buffer.writeln(material);
     }
-    var maxChars = (model.contextWindow * 0.4).round();
+    var maxChars = (inputTokens * 0.4).round();
     if (maxChars < 3000) maxChars = 3000;
     if (maxChars > 48000) maxChars = 48000;
 

@@ -9,7 +9,7 @@
   [![Android](https://img.shields.io/badge/Android-7.0%2B-3DDC84?style=flat-square&logo=android&logoColor=white)](#android)
   [![Web](https://img.shields.io/badge/Web-CanvasKit-4285F4?style=flat-square&logo=googlechrome&logoColor=white)](#web)
   [![License](https://img.shields.io/badge/license-MIT-2ea44f?style=flat-square)](LICENSE)
-  [![Version](https://img.shields.io/badge/version-1.0.4-426EFE?style=flat-square)](https://github.com/starsdragon/lumen/releases)
+  [![Version](https://img.shields.io/badge/version-1.0.5-426EFE?style=flat-square)](https://github.com/starsdragon/lumen/releases)
   [![Stars](https://img.shields.io/github/stars/starsdragon/lumen?style=flat-square&color=426EFE)](https://github.com/starsdragon/lumen/stargazers)
 </div>
 
@@ -18,7 +18,9 @@ Lumen 是一个本地优先的 Flutter AI 客户端，负责保存记忆、组�
 ## 当前可用
 
 - **长期记忆。** 对话后抽取用户画像和长期事实，画像按字段合并，记忆去重后按相关度、重要性和时间检索。所有内容都能在“长期记忆”里查看、编辑、置顶或删除。
+- **记忆备份。** 画像和记忆可导出为 JSON；导入支持合并或替换，替换前会二次确认。
 - **模型服务配置。** 在设置里填写服务地址、API Key 和模型 ID；模型清单可以从服务端读取。客户端不绑定具体平台。
+- **模型 token 设置。** 每个模型可以单独设置输入上限和输出上限；覆盖值保存在本地，模型列表刷新不会丢失。DeepSeek V4.1 Flash 默认按 1,000,000 输入处理。
 - **本地对话。** 流式回答、可折叠思考过程、工具调用卡片、Markdown、表格、代码块和公式。
 - **MCP。** 支持 HTTP、SSE 和桌面端 stdio；工具以 `mcp__` 前缀注入。
 - **本地优先。** 会话、消息、画像、记忆和 MCP 配置保存在本机；API Key 走系统安全存储。
@@ -82,6 +84,9 @@ flutter build apk --release
 - 模型服务由你自行配置，客户端不内置平台密钥。
 - 服务地址、API Key、模型 ID 和请求参数都可以在设置里修改。
 - 模型清单通过服务端接口读取；读取失败时保留本地缓存。
+- 模型选择器和厂商模型列表里有齿轮入口，可设置输入 token 上限和输出 token 上限；输出留空表示自动。
+- 输入上限决定上下文裁剪预算，输出上限用于单次请求；实际可用值仍受服务端限制。
+- 覆盖值按 `providerId::modelId` 保存在本地设置里，模型列表刷新不会覆盖。
 - 不同服务支持的参数不一致，客户端会按返回的错误做基础降级。
 
 ## 长期记忆
@@ -89,6 +94,8 @@ flutter build apk --release
 - 画像字段：称呼、职业、所在地、教育、性格、专业、兴趣、价值观、目标、沟通偏好、思维方式、综合摘要。
 - 记忆条目有分类、重要度、来源会话、创建/更新时间；可搜索、筛选、编辑、置顶、删除。
 - 自动抽取按对话轮次触发，抽取结果先合并画像、再去重事实。
+- 支持导出记忆库 JSON（含画像与记忆条目）；导入可合并或替换，替换前会确认。
+- 导入文件会校验应用标识、版本、字段类型和条目长度；损坏文件不会写入数据库。
 - 检索使用本地词法匹配（中文 bigram + 英文词），按相关度、重要度、置顶和时间排序后注入系统提示。
 - 个人规模下词法检索更容易解释、调试和离线运行；记忆量变大后可以替换检索实现。
 

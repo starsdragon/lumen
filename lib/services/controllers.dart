@@ -8,6 +8,7 @@ import '../data/defaults.dart';
 import '../data/models.dart';
 import 'api/model_sync.dart';
 import 'mcp_client.dart';
+import 'memory_transfer.dart';
 import 'search_service.dart';
 
 class SettingsController extends ChangeNotifier {
@@ -54,6 +55,30 @@ class SettingsController extends ChangeNotifier {
     notifyListeners();
   }
 
+  ModelTokenLimit? modelLimitFor(String providerId, String modelId) =>
+      settings.modelLimits[modelLimitKey(providerId, modelId)];
+
+  int inputTokensFor(ProviderConfig provider, ModelInfo model) =>
+      effectiveInputLimit(model, modelLimitFor(provider.id, model.id));
+
+  int outputTokensFor(ProviderConfig provider, ModelInfo model) =>
+      effectiveOutputLimit(model, modelLimitFor(provider.id, model.id));
+
+  Future<void> setModelLimit(
+    String providerId,
+    String modelId,
+    ModelTokenLimit? limit,
+  ) {
+    final next = Map<String, ModelTokenLimit>.from(settings.modelLimits);
+    final key = modelLimitKey(providerId, modelId);
+    if (limit == null || !limit.isValid) {
+      next.remove(key);
+    } else {
+      next[key] = limit;
+    }
+    return update(settings.copyWith(modelLimits: next));
+  }
+
   Future<void> rememberSelection(String providerId, String modelId) {
     if (settings.lastUsedProviderId == providerId &&
         settings.lastUsedModelId == modelId) {
@@ -73,6 +98,35 @@ class ModelSelection {
 
   final ProviderConfig provider;
   final ModelInfo model;
+}
+
+/// Merge a fresh `/models` response with local manual entries. Manual entries
+/// win on ID collisions; curated/previous windows win only when larger.
+List<ModelInfo> mergeSyncedModels({
+  required List<ModelInfo> synced,
+  required List<ModelInfo> current,
+}) {
+  final previous = {for (final model in current) model.id: model};
+  final manual = {
+    for (final model in current)
+      if (model.source == 'manual') model.id: model,
+  };
+  final merged = <ModelInfo>[];
+  for (final model in synced) {
+    final manualModel = manual.remove(model.id);
+    if (manualModel != null) {
+      merged.add(manualModel);
+      continue;
+    }
+    final old = previous[model.id];
+    merged.add(
+      old != null && old.contextWindow > model.contextWindow
+          ? model.copyWith(contextWindow: old.contextWindow)
+          : model,
+    );
+  }
+  merged.addAll(manual.values);
+  return merged;
 }
 
 class ProvidersController extends ChangeNotifier {
@@ -189,9 +243,10 @@ class ProvidersController extends ChangeNotifier {
         throw const HttpExceptionLike('请先填写 API Key。');
       }
       final models = await _sync.fetchModels(provider, key);
+      final merged = mergeSyncedModels(synced: models, current: provider.models);
       _replace(
         provider.copyWith(
-          models: models,
+          models: merged,
           modelsSyncedAt: DateTime.now(),
           clearSyncError: true,
         ),
@@ -246,6 +301,29 @@ class ProvidersController extends ChangeNotifier {
     if (syncAfterSave && refreshed.hasKey && !refreshed.demo) {
       unawaited(refreshModels(refreshed, silent: true));
     }
+  }
+
+  Future<void> updateModel(ProviderConfig provider, ModelInfo model) async {
+    final models = <ModelInfo>[
+      for (final existing in provider.models)
+        if (existing.id == model.id) model else existing,
+    ];
+    if (!models.any((existing) => existing.id == model.id)) {
+      models.add(model);
+    }
+    await saveProvider(
+      provider.copyWith(models: models),
+      syncAfterSave: false,
+    );
+  }
+
+  Future<void> removeModel(ProviderConfig provider, String modelId) async {
+    await saveProvider(
+      provider.copyWith(
+        models: provider.models.where((model) => model.id != modelId).toList(growable: false),
+      ),
+      syncAfterSave: false,
+    );
   }
 
   Future<void> deleteProvider(ProviderConfig provider) async {
@@ -436,6 +514,159 @@ class MemoriesController extends ChangeNotifier {
     for (final memory in memories) {
       await repo.db.saveMemory(memory);
     }
+  }
+
+  MemoryBundle exportBundle() => MemoryBundle(
+        profile: profile,
+        memories: List<MemoryItem>.from(memories),
+        exportedAt: nowUtc(),
+      );
+
+  Future<MemoryImportResult> importBundle(
+    MemoryBundle bundle, {
+    required MemoryImportMode mode,
+  }) async {
+    if (mode == MemoryImportMode.replace) {
+      final imported = [
+        for (final memory in bundle.memories)
+          MemoryItem(
+            id: newId('mem'),
+            content: memory.content.trim(),
+            category: memory.category,
+            importance: memory.importance.clamp(1, 5),
+            confidence: memory.confidence.clamp(0, 1),
+            createdAt: memory.createdAt,
+            lastUsedAt: memory.lastUsedAt,
+            pinned: memory.pinned,
+            manual: memory.manual,
+          ),
+      ];
+      final nextProfile = bundle.profile.copyWith(
+        updatedAt: bundle.profile.updatedAt ?? nowUtc(),
+      );
+      await repo.db.replaceMemories(nextProfile, imported);
+      profile = nextProfile;
+      memories = imported;
+      notifyListeners();
+      return MemoryImportResult(
+        added: imported.length,
+        updated: 0,
+        skipped: 0,
+        replaced: true,
+      );
+    }
+
+    var added = 0;
+    var updated = 0;
+    var skipped = 0;
+    final nextProfile = profile.copyWith();
+    var profileChanged = false;
+
+    void fillScalar(String incoming, String current, void Function(String) setter) {
+      if (incoming.trim().isNotEmpty && current.trim().isEmpty) {
+        setter(incoming.trim());
+        profileChanged = true;
+      }
+    }
+
+    void mergeList(
+      List<String> incoming,
+      List<String> current,
+      void Function(List<String>) setter,
+    ) {
+      if (incoming.isEmpty) return;
+      final seen = current.map(_normalize).toSet();
+      final merged = [...current];
+      for (final value in incoming) {
+        final key = _normalize(value);
+        if (key.isEmpty || seen.contains(key)) continue;
+        seen.add(key);
+        merged.add(value);
+        profileChanged = true;
+      }
+      if (merged.length != current.length) setter(merged.take(30).toList());
+    }
+
+    fillScalar(bundle.profile.name, nextProfile.name, (v) => nextProfile.name = v);
+    fillScalar(bundle.profile.occupation, nextProfile.occupation, (v) => nextProfile.occupation = v);
+    fillScalar(bundle.profile.location, nextProfile.location, (v) => nextProfile.location = v);
+    fillScalar(bundle.profile.education, nextProfile.education, (v) => nextProfile.education = v);
+    fillScalar(bundle.profile.thinkingStyle, nextProfile.thinkingStyle, (v) => nextProfile.thinkingStyle = v);
+    fillScalar(bundle.profile.summary, nextProfile.summary, (v) => nextProfile.summary = v);
+    mergeList(bundle.profile.personality, nextProfile.personality, (v) => nextProfile.personality = v);
+    mergeList(bundle.profile.expertise, nextProfile.expertise, (v) => nextProfile.expertise = v);
+    mergeList(bundle.profile.interests, nextProfile.interests, (v) => nextProfile.interests = v);
+    mergeList(bundle.profile.values, nextProfile.values, (v) => nextProfile.values = v);
+    mergeList(bundle.profile.goals, nextProfile.goals, (v) => nextProfile.goals = v);
+    mergeList(
+      bundle.profile.communicationStyle,
+      nextProfile.communicationStyle,
+      (v) => nextProfile.communicationStyle = v,
+    );
+    if (profileChanged) {
+      nextProfile.version = profile.version + 1;
+      nextProfile.updatedAt = nowUtc();
+      profile = nextProfile;
+      await repo.db.saveProfile(profile);
+    }
+
+    for (final incoming in bundle.memories) {
+      final content = incoming.content.trim();
+      if (content.isEmpty) {
+        skipped++;
+        continue;
+      }
+      MemoryItem? duplicate;
+      for (final existing in memories) {
+        if (_similar(existing.content, content)) {
+          duplicate = existing;
+          break;
+        }
+      }
+      if (duplicate != null) {
+        var changed = false;
+        if (incoming.importance > duplicate.importance) {
+          duplicate.importance = incoming.importance.clamp(1, 5);
+          changed = true;
+        }
+        if (incoming.confidence > duplicate.confidence) {
+          duplicate.confidence = incoming.confidence.clamp(0, 1);
+          changed = true;
+        }
+        if (incoming.pinned && !duplicate.pinned) {
+          duplicate.pinned = true;
+          changed = true;
+        }
+        if (changed) {
+          updated++;
+          await repo.db.saveMemory(duplicate);
+        } else {
+          skipped++;
+        }
+        continue;
+      }
+      final item = MemoryItem(
+        id: newId('mem'),
+        content: content,
+        category: incoming.category,
+        importance: incoming.importance.clamp(1, 5),
+        confidence: incoming.confidence.clamp(0, 1),
+        createdAt: incoming.createdAt,
+        lastUsedAt: incoming.lastUsedAt,
+        pinned: incoming.pinned,
+        manual: incoming.manual,
+      );
+      memories.insert(0, item);
+      added++;
+      await repo.db.saveMemory(item);
+    }
+    if (added > 0 || updated > 0 || profileChanged) notifyListeners();
+    return MemoryImportResult(
+      added: added,
+      updated: updated,
+      skipped: skipped,
+      replaced: false,
+    );
   }
 
   Future<String> saveMemoryTool(
