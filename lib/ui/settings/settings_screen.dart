@@ -12,6 +12,7 @@ import '../memory/memory_screen.dart';
 import 'mcp_screen.dart';
 import 'providers_screen.dart';
 import 'search_screen.dart';
+import 'system_prompt_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key, this.embedded = false});
@@ -88,58 +89,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _editSystemPrompt() async {
     final settings = context.read<SettingsController>();
-    final controller = TextEditingController(text: settings.settings.systemPrompt);
-    final result = await showDialog<String>(
-      context: context,
-      builder: (context) {
-        final c = context.colors;
-        return AlertDialog(
-          title: const Text('系统提示词'),
-          content: SizedBox(
-            width: 560,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '决定 Lumen 的角色、语气与回答规则。长期记忆和联网说明会自动追加在它后面。',
-                  style: context.text.bodySmall?.copyWith(color: c.textTertiary, height: 1.5),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: controller,
-                  minLines: 6,
-                  maxLines: 12,
-                  style: context.text.bodySmall?.copyWith(height: 1.55),
-                  decoration: const InputDecoration(hintText: '你希望 Lumen 怎样回答？'),
-                ),
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: () => controller.text = defaultSystemPrompt,
-                    icon: const Icon(Icons.restart_alt_rounded, size: 15),
-                    label: const Text('恢复默认'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, controller.text),
-              child: const Text('保存'),
-            ),
-          ],
-        );
-      },
+    final result = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => SystemPromptScreen(initial: settings.settings.systemPrompt),
+      ),
     );
     if (result != null && result.trim().isNotEmpty) {
       await settings.update(settings.settings.copyWith(systemPrompt: result.trim()));
       if (mounted) showToast(context, '系统提示词已更新');
     }
-    controller.dispose();
   }
 
   Future<void> _exportData() async {

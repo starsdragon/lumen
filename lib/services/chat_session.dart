@@ -1095,17 +1095,16 @@ class ChatSession extends ChangeNotifier {
     final buffer = StringBuffer();
     final recent = messages.length > 14 ? messages.sublist(messages.length - 14) : messages;
     for (final message in recent) {
-      if (message.role == ChatRole.user) {
-        final imageCount = message.attachments.where((a) => a.isImage).length;
-        final fileNames = message.attachments.where((a) => a.isFile).map((a) => a.name).join('、');
-        final suffix = [
-          if (imageCount > 0) '附有 $imageCount 张图片',
-          if (fileNames.isNotEmpty) '附有文件：$fileNames',
-        ].join('；');
-        buffer.writeln('用户：${truncate(message.text, 1200)}${suffix.isEmpty ? '' : '（$suffix）'}');
-      } else if (message.role == ChatRole.assistant && message.text.trim().isNotEmpty) {
-        buffer.writeln('助手：${truncate(message.text, 1400)}');
-      }
+      // Assistant summaries can echo untrusted web/file text. Memory extraction
+      // only gets first-party user statements, never assistant "facts".
+      if (message.role != ChatRole.user) continue;
+      final imageCount = message.attachments.where((a) => a.isImage).length;
+      final fileNames = message.attachments.where((a) => a.isFile).map((a) => a.name).join('、');
+      final suffix = [
+        if (imageCount > 0) '附有 $imageCount 张图片',
+        if (fileNames.isNotEmpty) '附有文件：$fileNames',
+      ].join('；');
+      buffer.writeln('用户：${truncate(message.text, 1200)}${suffix.isEmpty ? '' : '（$suffix）'}');
     }
     final text = buffer.toString().trim();
     return text.length > 8000 ? text.substring(text.length - 8000) : text;
